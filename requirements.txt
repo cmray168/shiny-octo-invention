@@ -1,3 +1,0 @@
-audio-separator==0.20.0
-gradio==5.49.1
-onnxruntime-gpu==1.20.1
