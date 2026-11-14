@@ -11,8 +11,8 @@
 > This README documents **this fork** of [Eddycrack864/UVR5-UI](https://github.com/Eddycrack864/UVR5-UI).
 > The separation engine and the original UI concept are unchanged — what's different is the
 > **execution model** (isolated worker by default), the **hardening around CUDA / cuBLAS**, the
-> **VRAM-aware retry ladder**, the **optional GPU-unlock AMP profile**, and a **modern Python
-> 3.13 / CUDA 12.8 / Gradio 6 frozen dependency set**.
+> **VRAM-aware retry ladder**, the **optional GPU-unlock AMP profile**, a **properly documented
+> Pitch Changer**, and a **modern Python 3.13 / CUDA 12.8 / Gradio 6 frozen dependency set**.
 
 ---
 
@@ -87,14 +87,41 @@ GPU is detected, the app prints a one-line hint.
 > once** to see the correct state. Runtime behaviour is correct either way — the worker log
 > (`[gpu-unlock] worker 請求 AMP 設定檔`) is the source of truth.
 
-### 5. Target sample rate enforcement
+### 5. Target sample rate enforcement (applies to every output)
 
-Every produced stem is guaranteed to be **≥ `UVR_TARGET_SR`** (default `44100`). Low-SR inputs
-are upsampled with `soxr` (`aresample=resampler=soxr:precision=28`) via ffmpeg; lossless fallback
-uses `librosa.resample(res_type="soxr_hq")`. This includes outputs from the ensemble combiner and
-the pitch-shift tab.
+Every produced stem — including **pitch-shifted files** and **ensemble combiners** — is
+guaranteed to be **≥ `UVR_TARGET_SR`** (default `44100`). Low-SR inputs are upsampled with `soxr`
+(`aresample=resampler=soxr:precision=28`) via ffmpeg; the lossless fallback uses
+`librosa.resample(res_type="soxr_hq")`.
 
-### 6. 4-slot Ensemble tab
+### 6. Pitch Changer (Rubber Band, with target-SR guarantee)
+
+A dedicated tab for **pitch shifting without changing speed** — useful for transposing a track
+to a singer's key, fixing a recording that drifted a few cents, or preparing a karaoke backing
+track in a specific key.
+
+- **Fractional semitones.** The pitch is set either by the `-12 … +12` slider (0.05 step) or by
+  typing an exact value into the **Exact pitch** number field (4 decimal places). Both stay in
+  sync — moving the slider updates the number, and vice versa.
+- **Formant preservation** (default **on**). Rubber Band's `--formant` keeps the vocal timbre
+  natural when shifting male ↔ female ranges, instead of the chipmunk/demon effect.
+- **Quality 1–5** (default **5**). Quality ≥ 4 adds `--pitch-hq --fine` to the Rubber Band
+  command; quality 3 uses `--pitch-hq` alone; quality < 3 uses the fast path.
+- **Input is auto-converted.** The same `smart_media_ingest` pipeline as the Ensemble tab handles
+  video containers and low-SR files, so you can drop in an MP4 or a 22 kHz WAV and it just works.
+- **URL download** is built into the tab — paste a YouTube / SoundCloud link and the audio is
+  fetched to the input field.
+- **Output is always 24-bit WAV at ≥ `UVR_TARGET_SR`.** Never a downsample, never a lossy
+  intermediate. Result filename: `<stem>_pitch_<+1.5|-2>.wav`.
+- **Requires the Rubber Band CLI** on `PATH` (see [System dependencies](#system-dependencies)).
+  If it's missing, the tab raises a clear error instead of failing silently.
+
+Internally it: loads via `librosa`, resamples to the target rate if needed, writes a temporary
+FLOAT WAV, invokes `rubberband`, reads the result back, writes a 24-bit PCM output, and cleans up
+the temp files. Long files show a heartbeat progress bar so the UI doesn't look frozen while
+Rubber Band is churning.
+
+### 7. 4-slot Ensemble tab
 
 Four independent model slots, each with its own model picker, weight slider, and per-stem
 preview. Per-slot controls (`segment`, `batch`, `format`) feed every slot; the combine button
@@ -103,7 +130,7 @@ mixes the selected stems into a single output with normalized weights.
 Each slot's per-`Stem N` label shows the **real** sample rate, so you can see at a glance which
 stems came in below 44.1 kHz and were upsampled.
 
-### 7. GPU / Memory tab
+### 8. GPU / Memory tab
 
 Read-only status panel + the safe recovery actions:
 
@@ -115,14 +142,14 @@ Read-only status panel + the safe recovery actions:
 
 All actions respect `_separator_lock` so they can't race with a separation.
 
-### 8. Model cache + idle reaper
+### 9. Model cache + idle reaper
 
 Off by default. Enable with `UVR_MODEL_CACHE=1`. When on, the loaded model is reused across runs
 and released after `UVR_MODEL_IDLE_TIMEOUT` seconds (default `900`). The `--in-process` mode is
 the main beneficiary; the isolated-worker path is intentionally cache-free (worker lifetime = one
 separation).
 
-### 9. Client-disconnect filter and SSE un-buffering
+### 10. Client-disconnect filter and SSE un-buffering
 
 - `ClientDisconnect` is filtered out of `uvicorn.error` (benign browser aborts).
 - `X-Accel-Buffering: no` middleware is installed so reverse proxies don't buffer the streaming
@@ -130,7 +157,7 @@ separation).
 - `FORWARDED_ALLOW_IPS=*` and `GRADIO_HEARTBEAT_INTERVAL=8` are set by default for
   reverse-proxy deployments.
 
-### 10. Gradio 4/5 compatibility shims (still in tree, no-op on Gradio 6)
+### 11. Gradio 4/5 compatibility shims (still in tree, no-op on Gradio 6)
 
 - `_update()` returns a proper `{"__type__": "update", ...}` dict when `gr.update` is missing,
   instead of constructing a new component instance.
@@ -154,7 +181,8 @@ fallback path fires and every Radio / Audio / Markdown update path in the UI nee
 - Music source separation models
 - VIP models
 - **4-slot ensemble with weighted stem mixing**
-- **Pitch changer** (Rubber Band, fractional semitones, formant preservation)
+- **Pitch Changer** — Rubber Band engine, fractional semitones, formant preservation,
+  quality 1–5, URL download built in, output always 24-bit ≥ 44.1 kHz
 - Separation of audio/video from any site supported by
   [yt-dlp](https://github.com/yt-dlp/yt-dlp) — with **JS-runtime auto-discovery**
   (Node / Deno / Bun / QuickJS; **Deno is bundled** in the frozen stack)
@@ -163,7 +191,7 @@ fallback path fires and every Radio / Audio / Markdown update path in the UI nee
 - Theme selector
 - Leaderboard (read-only SDR listing)
 - **GPU / Memory management tab**
-- **Target sample rate enforcement** on every output
+- **Target sample rate enforcement** on every output (stems, pitch, combine)
 - Colab / Kaggle / Lightning.ai / Docker support
 - Windows / Linux support
 
@@ -213,13 +241,17 @@ fallback path fires and every Radio / Audio / Markdown update path in the UI nee
   - Fedora: `sudo dnf install ffmpeg git`
   - Windows: [ffmpeg.org](https://www.ffmpeg.org/download.html) or the
     [automated installer](https://github.com/Eddycrack864/UVR5-UI/blob/main/info/ffmpeg-installer.bat)
-- **Rubber Band CLI** for the pitch changer:
+- **Rubber Band CLI** — required for the **Pitch Changer** tab
   - Debian/Ubuntu: `sudo apt install rubberband-cli`
+  - Arch: `sudo pacman -S rubberband`
+  - Fedora: `sudo dnf install rubberband`
   - macOS: `brew install rubberband`
   - Windows: binary from [breakfastquay.com](https://breakfastquay.com/rubberband/)
 
 > [!IMPORTANT]
 > FFmpeg **must** be on the PATH. On Windows, restart the terminal after adding it.
+> Without Rubber Band, the Pitch Changer tab raises a clear error when you click **Pitch Shift**
+> — the rest of the app is unaffected.
 
 ---
 
@@ -304,6 +336,43 @@ first, then open an issue.
 
 ---
 
+## Using the Pitch Changer
+
+Open the **Pitch Changer** tab. The flow:
+
+1. **Load audio** — drop a file into the input box, or paste a YouTube / SoundCloud link into the
+   *…or fetch from a link* accordion and click **Download into the input field**. Video files are
+   automatically stripped to audio; low-SR files are upsampled. The resolved audio appears in the
+   preview player with its real sample rate and duration.
+2. **Set the pitch** — drag the *Pitch (semitones)* slider (−12 … +12, 0.05 step) **or** type an
+   exact value into *Exact pitch* (4 decimal places). They sync both ways. Positive = higher
+   pitch, negative = lower.
+   - Whole semitones for transposing keys: `+2` = up a whole tone, `-3` = down a minor third.
+   - Fractional values for fine tuning: `+0.25` ≈ quarter semitone, `-1.5` = minor third down
+     minus a quarter.
+3. **Options** —
+   - **Preserve Formant** (default ✅): keeps vocal timbre natural across large shifts. Turn it
+     off if you *want* the chipmunk/demon effect.
+   - **Quality** (1–5, default 5): 5 = best. Quality ≥ 4 adds `--pitch-hq --fine` to Rubber
+     Band; quality 3 uses `--pitch-hq`; lower uses the fast path. On long files quality 5 can be
+     slow — drop to 3 if you're iterating.
+4. **Click Pitch Shift.** The result is a **24-bit WAV at ≥ 44.1 kHz** named
+   `<stem>_pitch_<sign><value>.wav`, e.g. `vocals_pitch_+2.wav` or `song_pitch_-1.50.wav`.
+5. **Preview / download** from the output player.
+
+**Notes:**
+
+- Pitch shifting is **speed-preserving**. If you want pitch *and* speed change, use a DAW — this
+  tool is deliberately time-locked.
+- Output format is fixed at 24-bit WAV; there is no format dropdown for this tab. Convert with
+  ffmpeg if you need MP3 / FLAC.
+- The result lands in a fresh `temp_outputs/<uuid>/` folder, so it does **not** overwrite your
+  input.
+- If you see `Rubber Band CLI not installed`, install `rubberband-cli` (Linux) / `rubberband`
+  (macOS) / the Windows binary — see [System dependencies](#system-dependencies).
+
+---
+
 ## Command-line options
 
 `app.py` accepts the following flags. They override the environment variables below.
@@ -316,7 +385,7 @@ first, then open an issue.
 | `--cpu` | Force CPU inference (`UVR_FORCE_CPU=1`). The GPU tab still shows hardware info but does not touch the CUDA runtime. |
 | `--no-cpu-fallback` | If a GPU separation fails, raise instead of falling back to CPU. |
 | `--in-process` | Disable the isolated worker; run separations in the parent process (classic behaviour). |
-| `--target-sr N` | Minimum output sample rate (default `44100`). |
+| `--target-sr N` | Minimum output sample rate (default `44100`). Applies to stems, pitch, and combine output. |
 | `--gpu-unlock-profile` | Enable the optional GPU-unlock AMP profile (Linux / SM 8.6 / RoFormer + MDX23C only). Does **not** install or load the kernel module. |
 
 > [!TIP]
@@ -357,7 +426,7 @@ All defaults are chosen for **stability on 12 GB GPUs** — override only if you
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `UVR_TARGET_SR` | `44100` | Minimum output sample rate. |
+| `UVR_TARGET_SR` | `44100` | Minimum output sample rate (stems, pitch, combine). |
 | `UVR_TEMP_TTL` | `10800` | Temp folders older than this are purged by the janitor. |
 | `UVR_MAX_FILE_SIZE` | `10gb` | Gradio upload limit. |
 
@@ -444,7 +513,13 @@ pip uninstall -y onnxruntime
 pip install onnxruntime-gpu==1.28.0
 ```
 
-Also confirm your venv's `python` is the one you froze with:
+Confirm Rubber Band is on the PATH (needed for the Pitch Changer):
+
+```bash
+rubberband --help    # should print usage, not "command not found"
+```
+
+And confirm your venv's `python` is the one you froze with:
 
 ```bash
 which python       # should print .../UVR5-UI/env/bin/python
@@ -482,6 +557,7 @@ Requirements / recommendations:
 - Forward port **6138** for the UI (upstream docs are stale here — `--listen-port 9999` restores
   the old port if you want it)
 - NVIDIA drivers + `nvidia-container-toolkit` installed
+- Install `rubberband-cli` inside the container if you want the Pitch Changer tab
 
 ---
 
@@ -499,6 +575,8 @@ Requirements / recommendations:
 - **`torchaudio` must stay in lockstep with `torch`.** Freeze files that drift these apart fail
   at import with a CUDA-compile-mismatch error. Your frozen file has them aligned (`2.7.1` ↔
   `2.7.1`) — keep it that way.
+- **Pitch Changer needs Rubber Band.** Without `rubberband-cli` on the PATH, the **Pitch Shift**
+  button raises `Rubber Band CLI not installed` — the rest of the app is unaffected.
 
 ---
 
@@ -519,7 +597,7 @@ Donate to upstream UVR5:
 ## TO-DO
 
 - More models
-- More output formats
+- More output formats (Pitch Changer is currently 24-bit WAV only)
 - Structured logging for the worker (JSON, not markers)
 - First-class support for `--in-process` model cache across ensemble slots
 - Fix the GPU-tab initial-render-before-argparse quirk
@@ -536,6 +614,7 @@ Donate to upstream UVR5:
 - **NeoDev** ([TheNeodev](https://github.com/TheNeodev)) — URL separation source and improvements
 - **ArisDev** ([aris-py](https://github.com/aris-py)) — Kaggle port and improvements
 - **Zagitta** — [gpu-unlock](https://github.com/Zagitta/gpu-unlock) (optional, external)
+- **Breakfast Quay** — [Rubber Band](https://breakfastquay.com/rubberband/) pitch-shifting engine
 
 The hardening work in this build (isolated worker, retry ladder, cuBLAS fixes, GPU-unlock profile
 plumbing, sample-rate enforcement, GPU/Memory tab, Python 3.13 / CUDA 12.8 / Gradio 6 migration)
