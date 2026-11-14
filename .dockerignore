@@ -1,0 +1,6 @@
+models/
+temp_outputs/
+env/
+*.pyc
+__pycache__/
+.git/

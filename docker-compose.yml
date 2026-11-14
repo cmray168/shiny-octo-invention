@@ -1,0 +1,17 @@
+services:
+  uvr5-ui:
+    #build:
+    #  context: .                # 项目根目录（包含 Dockerfile.gpu 和 .dockerignore）
+    #  dockerfile: Dockerfile.gpu
+    image: uvr5-ui:gpu
+    container_name: uvr5-gpu
+    runtime: nvidia             # 启用 GPU（需安装 nvidia-container-toolkit）
+    ports:
+      - "6138:6138"             # 映射端口
+    volumes:
+      - "/media/e3/S2 OS tools/UVR5-UI/models:/app/models:z"   # 增加 :z
+      - "./temp_outputs:/app/temp_outputs"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    restart: unless-stopped     # 自动重启
